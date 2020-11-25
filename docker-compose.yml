@@ -1,0 +1,56 @@
+version : '3.4'
+services :
+  zookeeper :
+    image : confluentinc/cp-zookeeper:latest
+    networks :
+      - net
+    environment :
+      ZOOKEEPER_CLIENT_PORT : 2181
+      ZOOKEEPER_TICK_TIME : 2000
+
+  kafka1 :
+    image : confluentinc/cp-kafka:latest
+    networks :
+      - net
+    depends_on :
+      - zookeeper
+    ports :
+      - 9091:9091
+    environment :
+      KAFKA_ADVERTISED_LISTENERS: LISTENER_DOCKER_INTERNAL://kafka1:19091,LISTENER_DOCKER_EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9091
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: LISTENER_DOCKER_INTERNAL:PLAINTEXT,LISTENER_DOCKER_EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: LISTENER_DOCKER_INTERNAL
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_BROKER_ID: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  
+  kafdrop:
+    image: obsidiandynamics/kafdrop
+    restart: "no"
+    ports:
+      - "9000:9000"
+    networks :
+      - net
+    environment:
+      KAFKA_BROKERCONNECT: "kafka1:19091"
+    depends_on:
+      - kafka1
+  
+  run:
+    image: ${DOCKER_REGISTRY-}kafka-demo-run
+    container_name: kafka-demo-run
+    environment:
+      - KAFKA_HostAndPort=kafka1:19091
+    networks :
+      - net
+    depends_on :
+      - kafdrop
+    ports:
+      - '8080:80'
+    build:
+      context: .
+      target: runtime
+
+networks :
+  net :
+    driver : bridge
