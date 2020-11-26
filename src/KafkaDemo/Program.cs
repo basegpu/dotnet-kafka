@@ -1,15 +1,7 @@
-using System;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
-using Confluent.Kafka;
-using Confluent.Kafka.Admin;
-using Kafka.Public;
-using Kafka.Public.Loggers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
+using KafkaDemo.Services;
 
 namespace KafkaDemo
 {
@@ -28,124 +20,9 @@ namespace KafkaDemo
                 })
                 .ConfigureServices((context, collection) =>
                 {
-                    collection.AddHostedService<KafkaAdminHostedService>();
-                    collection.AddHostedService<KafkaConsumerHostedService>();
-                    collection.AddHostedService<KafkaProducerHostedService>();
+                    collection.AddHostedService<KafkaAdminService>();
+                    collection.AddHostedService<KafkaConsumerService>();
+                    collection.AddHostedService<KafkaProducerService>();
                 });
-    }
-
-    public abstract class KafkaBaseHostedService<T> : IHostedService
-    {
-        protected readonly ILogger<T> _logger;
-        protected readonly string _topic;
-
-        protected KafkaBaseHostedService(ILogger<T> logger, IConfiguration cfg)
-        {
-            _logger = logger;
-            _topic = cfg.GetValue<string>("TOPIC_NAME");
-        }
-
-        public abstract Task StartAsync(CancellationToken ct);
-        public abstract Task StopAsync(CancellationToken ct);
-    }
-
-    public class KafkaAdminHostedService : KafkaBaseHostedService<KafkaAdminHostedService>
-    {
-        private readonly IAdminClient _client;
-
-        public KafkaAdminHostedService(ILogger<KafkaAdminHostedService> logger, IConfiguration cfg) : base(logger, cfg)
-        {
-            _client = new AdminClientBuilder(new AdminClientConfig
-            {
-                BootstrapServers = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
-            }).Build();
-        }
-
-        public override Task StartAsync(CancellationToken cancellationToken)
-        {
-            try
-            {
-                _client.CreateTopicsAsync(new TopicSpecification[] {
-                    new TopicSpecification { Name = _topic, ReplicationFactor = 1, NumPartitions = 1 } });
-            }
-            catch (CreateTopicsException e)
-            {
-                _logger.LogError($"An error occured creating topic {e.Results[0].Topic}: {e.Results[0].Error.Reason}");
-            }
-
-            return Task.CompletedTask;
-        }
-
-        public override Task StopAsync(CancellationToken cancellationToken)
-        {
-            _client?.Dispose();
-            return Task.CompletedTask;
-        }
-    }
-
-    public class KafkaConsumerHostedService : KafkaBaseHostedService<KafkaConsumerHostedService>
-    {
-        private readonly ClusterClient _cluster;
-
-        public KafkaConsumerHostedService(ILogger<KafkaConsumerHostedService> logger, IConfiguration cfg) : base(logger, cfg)
-        {
-            _cluster = new ClusterClient(new Configuration
-            {
-                Seeds = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
-            }, new ConsoleLogger());
-        }
-        
-        public override Task StartAsync(CancellationToken cancellationToken)
-        {
-            _cluster.ConsumeFromLatest(_topic);
-            _cluster.MessageReceived += record =>
-            {
-                _logger.LogInformation($"Received: {Encoding.UTF8.GetString(record.Value as byte[])}");
-            };
-
-            return Task.CompletedTask;
-        }
-
-        public override Task StopAsync(CancellationToken cancellationToken)
-        {
-            _cluster?.Dispose();
-            return Task.CompletedTask;
-        }
-    }
-
-    public class KafkaProducerHostedService : KafkaBaseHostedService<KafkaProducerHostedService>
-    {
-        private readonly IProducer<Null, string> _producer;
-
-        public KafkaProducerHostedService(ILogger<KafkaProducerHostedService> logger, IConfiguration cfg) : base(logger, cfg)
-        {
-            var config = new ProducerConfig()
-            {
-                BootstrapServers = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
-            };
-            _producer = new ProducerBuilder<Null, string>(config).Build();
-        }
-        
-        public override async Task StartAsync(CancellationToken cancellationToken)
-        {
-            for (var i = 0; i < 100; ++i)
-            {
-                var value = $"Hello World {i}";
-                _logger.LogInformation(value);
-                await _producer.ProduceAsync(_topic, new Message<Null, string>()
-                {
-                    Value = value
-                }, cancellationToken);
-                Thread.Sleep(100);
-            }
-
-            _producer.Flush(TimeSpan.FromSeconds(10));
-        }
-
-        public override Task StopAsync(CancellationToken cancellationToken)
-        {
-            _producer?.Dispose();
-            return Task.CompletedTask;
-        }
     }
 }
