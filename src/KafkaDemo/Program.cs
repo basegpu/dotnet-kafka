@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
+using Confluent.Kafka.Admin;
 using Kafka.Public;
 using Kafka.Public.Loggers;
 using Microsoft.Extensions.Configuration;
@@ -27,9 +28,46 @@ namespace KafkaDemo
                 })
                 .ConfigureServices((context, collection) =>
                 {
+                    collection.AddHostedService<KafkaAdminHostedService>();
                     collection.AddHostedService<KafkaConsumerHostedService>();
                     collection.AddHostedService<KafkaProducerHostedService>();
                 });
+    }
+
+    public class KafkaAdminHostedService : IHostedService
+    {
+        private readonly ILogger<KafkaAdminHostedService> _logger;
+        private readonly IAdminClient _client;
+
+        public KafkaAdminHostedService(ILogger<KafkaAdminHostedService> logger, IConfiguration cfg)
+        {
+            _logger = logger;
+            _client = new AdminClientBuilder(new AdminClientConfig
+            {
+                BootstrapServers = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
+            }).Build();
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                _client.CreateTopicsAsync(new TopicSpecification[] {
+                    new TopicSpecification { Name = "demo", ReplicationFactor = 1, NumPartitions = 1 } });
+            }
+            catch (CreateTopicsException e)
+            {
+                _logger.LogError($"An error occured creating topic {e.Results[0].Topic}: {e.Results[0].Error.Reason}");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            _client?.Dispose();
+            return Task.CompletedTask;
+        }
     }
 
     public class KafkaConsumerHostedService : IHostedService
@@ -42,7 +80,7 @@ namespace KafkaDemo
             _logger = logger;
             _cluster = new ClusterClient(new Configuration
             {
-                Seeds = cfg.GetValue<string>("HostAndPort")
+                Seeds = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
             }, new ConsoleLogger());
         }
         
@@ -74,7 +112,7 @@ namespace KafkaDemo
             _logger = logger;
             var config = new ProducerConfig()
             {
-                BootstrapServers = cfg.GetValue<string>("HostAndPort")
+                BootstrapServers = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
             };
             _producer = new ProducerBuilder<Null, string>(config).Build();
         }
@@ -89,6 +127,7 @@ namespace KafkaDemo
                 {
                     Value = value
                 }, cancellationToken);
+                Thread.Sleep(100);
             }
 
             _producer.Flush(TimeSpan.FromSeconds(10));
