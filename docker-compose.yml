@@ -41,6 +41,7 @@ services :
     container_name: kafka-demo-run
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka1:19091
+      - KAFKA_TOPIC_NAME=demo
     networks :
       - net
     depends_on :

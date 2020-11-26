@@ -34,26 +34,39 @@ namespace KafkaDemo
                 });
     }
 
-    public class KafkaAdminHostedService : IHostedService
+    public abstract class KafkaBaseHostedService<T> : IHostedService
     {
-        private readonly ILogger<KafkaAdminHostedService> _logger;
-        private readonly IAdminClient _client;
+        protected readonly ILogger<T> _logger;
+        protected readonly string _topic;
 
-        public KafkaAdminHostedService(ILogger<KafkaAdminHostedService> logger, IConfiguration cfg)
+        protected KafkaBaseHostedService(ILogger<T> logger, IConfiguration cfg)
         {
             _logger = logger;
+            _topic = cfg.GetValue<string>("TOPIC_NAME");
+        }
+
+        public abstract Task StartAsync(CancellationToken ct);
+        public abstract Task StopAsync(CancellationToken ct);
+    }
+
+    public class KafkaAdminHostedService : KafkaBaseHostedService<KafkaAdminHostedService>
+    {
+        private readonly IAdminClient _client;
+
+        public KafkaAdminHostedService(ILogger<KafkaAdminHostedService> logger, IConfiguration cfg) : base(logger, cfg)
+        {
             _client = new AdminClientBuilder(new AdminClientConfig
             {
                 BootstrapServers = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
             }).Build();
         }
 
-        public Task StartAsync(CancellationToken cancellationToken)
+        public override Task StartAsync(CancellationToken cancellationToken)
         {
             try
             {
                 _client.CreateTopicsAsync(new TopicSpecification[] {
-                    new TopicSpecification { Name = "demo", ReplicationFactor = 1, NumPartitions = 1 } });
+                    new TopicSpecification { Name = _topic, ReplicationFactor = 1, NumPartitions = 1 } });
             }
             catch (CreateTopicsException e)
             {
@@ -63,30 +76,28 @@ namespace KafkaDemo
             return Task.CompletedTask;
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        public override Task StopAsync(CancellationToken cancellationToken)
         {
             _client?.Dispose();
             return Task.CompletedTask;
         }
     }
 
-    public class KafkaConsumerHostedService : IHostedService
+    public class KafkaConsumerHostedService : KafkaBaseHostedService<KafkaConsumerHostedService>
     {
-        private readonly ILogger<KafkaConsumerHostedService> _logger;
         private readonly ClusterClient _cluster;
 
-        public KafkaConsumerHostedService(ILogger<KafkaConsumerHostedService> logger, IConfiguration cfg)
+        public KafkaConsumerHostedService(ILogger<KafkaConsumerHostedService> logger, IConfiguration cfg) : base(logger, cfg)
         {
-            _logger = logger;
             _cluster = new ClusterClient(new Configuration
             {
                 Seeds = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
             }, new ConsoleLogger());
         }
         
-        public Task StartAsync(CancellationToken cancellationToken)
+        public override Task StartAsync(CancellationToken cancellationToken)
         {
-            _cluster.ConsumeFromLatest("demo");
+            _cluster.ConsumeFromLatest(_topic);
             _cluster.MessageReceived += record =>
             {
                 _logger.LogInformation($"Received: {Encoding.UTF8.GetString(record.Value as byte[])}");
@@ -95,21 +106,19 @@ namespace KafkaDemo
             return Task.CompletedTask;
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        public override Task StopAsync(CancellationToken cancellationToken)
         {
             _cluster?.Dispose();
             return Task.CompletedTask;
         }
     }
 
-    public class KafkaProducerHostedService : IHostedService
+    public class KafkaProducerHostedService : KafkaBaseHostedService<KafkaProducerHostedService>
     {
-        private readonly ILogger<KafkaProducerHostedService> _logger;
         private readonly IProducer<Null, string> _producer;
 
-        public KafkaProducerHostedService(ILogger<KafkaProducerHostedService> logger, IConfiguration cfg)
+        public KafkaProducerHostedService(ILogger<KafkaProducerHostedService> logger, IConfiguration cfg) : base(logger, cfg)
         {
-            _logger = logger;
             var config = new ProducerConfig()
             {
                 BootstrapServers = cfg.GetValue<string>("BOOTSTRAP_SERVERS")
@@ -117,13 +126,13 @@ namespace KafkaDemo
             _producer = new ProducerBuilder<Null, string>(config).Build();
         }
         
-        public async Task StartAsync(CancellationToken cancellationToken)
+        public override async Task StartAsync(CancellationToken cancellationToken)
         {
             for (var i = 0; i < 100; ++i)
             {
                 var value = $"Hello World {i}";
                 _logger.LogInformation(value);
-                await _producer.ProduceAsync("demo", new Message<Null, string>()
+                await _producer.ProduceAsync(_topic, new Message<Null, string>()
                 {
                     Value = value
                 }, cancellationToken);
@@ -133,7 +142,7 @@ namespace KafkaDemo
             _producer.Flush(TimeSpan.FromSeconds(10));
         }
 
-        public Task StopAsync(CancellationToken cancellationToken)
+        public override Task StopAsync(CancellationToken cancellationToken)
         {
             _producer?.Dispose();
             return Task.CompletedTask;
